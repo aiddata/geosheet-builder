@@ -20,10 +20,11 @@ import copy
 
 class BuilderClass(object):
 
-    def __init__(self, geosheet=None, outgeojson=None):
+    def __init__(self, geosheet=None, outgeojson=None, outtxt=None):
 
         self.geosheet = geosheet
         self.outgeojson = outgeojson
+        self.outtxt = open(outtxt, "w")
 
 
     def get_full_url(self):
@@ -32,12 +33,13 @@ class BuilderClass(object):
         This function is used to 1). create an unique location id; 2). retrieve the full geojson url
         :return: geoshee.csv with location id and geojson link
         """
-
+        self.outtxt.write("Start retrieving geojson url.\n")
         print "Start retrieving geojson url."
 
         df = pd.read_csv(self.geosheet, encoding='utf-8', sep='\t')
         df.dropna(how="all", inplace=True)
 
+        self.outtxt.write("Creating unique location id......\n")
         print "Creating unique location id......"
 
         # Create an unique location id
@@ -65,6 +67,9 @@ class BuilderClass(object):
         df.to_csv("test.tsv", sep='\t', encoding='utf-8', index=False)
         print "Finish creating unique location id...."
         print "Finish retrieving geojson url."
+
+        self.outtxt.write("Finish creating unique location id....\n")
+        self.outtxt.write("Finish retrieving geojson url.\n")
 
 
     def create_id(self):
@@ -129,6 +134,7 @@ class BuilderClass(object):
         """
 
         print "Start merging geojson files..."
+        self.outtxt.write("Start merging geojson files...\n")
 
         infiles = [os.path.join(inpath,f) for f in os.listdir(inpath) if os.path.isfile(os.path.join(inpath, f)) and f.endswith("geojson")]
 
@@ -146,18 +152,10 @@ class BuilderClass(object):
             property_dict["project_location_id"] = "_".join([str(project_id),location_id])
 
 
-            injson = json.load(open(infile))
-            newjson = injson
-            """
-            if len(injson["features"])!=1:#[0]["properties"] = property_dict
+            injsonfile = json.load(open(infile))
+            newjson = self.geom_check(injsonfile, project_id, location_id)
 
-                newjson = self.connect_lines(infile)
-
-            else:
-                print injson["features"][0]
-                newjson = injson
-
-            """
+            #self.geom_check(injsonfile, project_id, location_id)
 
             if newjson.get('type', None) != 'FeatureCollection':
                 raise Exception('Sorry, "%s" does not look like GeoJSON' % infile)
@@ -182,7 +180,7 @@ class BuilderClass(object):
             output.write(token)
 
 
-    def geom_check(self):
+    def geom_check(self, injson, proj_id, loc_id):
         """
         :return:
         """
@@ -190,15 +188,57 @@ class BuilderClass(object):
         # line: not multiple lines in a geojson
         # polygon: not multiple polygons
         # points: not multiple points, no point features!!!!!!!!!!!!!
+        # not combination of geometry types
 
-        return
+        # input is the geojson file
+
+        geom_types = ["LineString", "Polygon"]
+
+        geoms = injson["features"]
+
+        if len(geoms) != 1:  # [0]["properties"] = property_dict
+
+            dest_geom_type = geoms[0]["geometry"]["type"]
+
+            if dest_geom_type not in geom_types:
+
+                print "Geometry Error: geometry types of project %s location %s is not correct." % (proj_id, loc_id)
+                self.outtxt.write("Geometry Error: geometry types of project %s location %s is not correct. \n" % (proj_id, loc_id))
+                return injson
+
+            else:
+
+                for i in range(1,len(geoms)):
+
+                    new_geom_type = geoms[0]["geometry"]["type"]
+
+                    if dest_geom_type != new_geom_type:
+
+                        print "Geometry Error: there are multiple geometry types in project %s location %s"%(proj_id, loc_id)
+                        self.outtxt.write("Geometry Error: there are multiple geometry types in project %s location %s \n"%(proj_id, loc_id))
+                        return injson
+
+                    else:
+
+                        print "Geometry Error: there are multiple geometry features in project %s location %s" % (proj_id, loc_id)
+                        self.outtxt.write("Geometry Error: there are multiple geometry features in project %s location %s \n" % (proj_id, loc_id))
+
+                        if new_geom_type == "LineString":
+
+                            self.outtxt.write("Correct multiline geometry for project %s location %s \n" % (proj_id, loc_id))
+                            return self.connect_lines(injson)
+
+                        else:
+                            return injson
+
+        else:
+            return injson
 
 
 
 
 
-
-    def connect_lines(self, infile):
+    def connect_lines(self, injson):
         """
         This function is used to connect polylines that are supposed to be one polyline.
         :return:
@@ -206,14 +246,11 @@ class BuilderClass(object):
 
         newjson = dict(type='FeatureCollection', features=[])
 
-        injson = json.load(open(infile))
-
         newjson["features"].append(copy.deepcopy(injson["features"][0]))
 
         coords = []
 
         for i in range(0, len(injson["features"])):
-
             coords = coords + injson["features"][i]["geometry"]["coordinates"]
 
 
