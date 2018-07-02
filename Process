@@ -1,0 +1,53 @@
+
+
+
+File structure:
+- raw data
+    - GeoSheet
+    - ancillary file from source
+- processing
+    - geographic
+        - shapefile
+        - geojson
+    - ancillary
+- merged files
+    - geographic
+        - shapefile with standardized attribute tables
+        - geojson format
+
+
+
+
+Working on GeoSheet
+- download the final geosheet from google doc: https://gist.github.com/cspickert/1650271#file-googlespreadsheets-py
+    - Enable Google Doc API
+    - Create a credential
+    - Install python library to access google doc: pip install --upgrade google-api-python-client
+
+- Standardize columns: project_id, Location Name, Identified Location Type, Source URL, Geoparsing Notes, Geocoded Location Type,
+                    GeoJSON Link or Feature ID, Geocoding and Review Notes
+- Remove blank rows
+- Add columns names
+- Check the availability of location information (feature ID or geojson link)
+
+Working on spatial info
+- Read geojson file and download geojson to local folders, rename based on project_id (something that is identical to the feature)
+- Read feature ID and download geojson to local folders, name it based on project_id and feature id?
+- Create a big geojson file with all locations geojson
+- Convert geojson to shapfile
+
+
+
+- run script1 to get GeoSheet from google doc
+- run script2 to retrieve all geojson data into destination folder
+
+
+add later:
+- process report, for example, fix geometry of project_location_id xx, etc.
+- make different class: geometry (check and fix), data download (google sheet), data processing
+
+
+*** Unzip all geoboundaries to a destination that is online, which will be used to retrieve feature geojson ***
+
+
+http://stream.princeton.edu/AWCM/LIBRARIES/pyhdf-0.8.3/doc/webpage/source/install.html
