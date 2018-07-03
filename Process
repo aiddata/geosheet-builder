@@ -31,15 +31,20 @@ Working on GeoSheet
 - Check the availability of location information (feature ID or geojson link)
 
 Working on spatial info
-- Read geojson file and download geojson to local folders, rename based on project_id (something that is identical to the feature)
-- Read feature ID and download geojson to local folders, name it based on project_id and feature id?
+- Read geojson file and download geojson to local folders, rename based on project_id (something that is identical to the feature) (done)
+- Read feature ID and download geojson to local folders, name it based on project_id and feature id (done)
 - Create a big geojson file with all locations geojson
+    - check geometry
+    - cannot have multiple lines/polygons
+    - no point feature
+    - no various geometry combination
 - Convert geojson to shapfile
 
 
 
 - run script1 to get GeoSheet from google doc
-- run script2 to retrieve all geojson data into destination folder
+- run script2 to retrieve all geojson data into destination folder (run the script through terminal)
+- run script3 to combine/geometry check geojson
 
 
 add later:
