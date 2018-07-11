@@ -1,20 +1,17 @@
 
 
 
-File structure:
+Working on data folder hierarchy:
 - raw data
-    - GeoSheet
+    - GeoSheet: the raw geocoded geosheet file from Google Team Drive
     - ancillary file from source
 - processing
-    - geographic
-        - shapefile
-        - geojson
-    - ancillary
+    - geographic: the raw geojson files of geocoded locations
+    - ancillary: modified/standardized version of projects/transactions
 - merged files
-    - geographic
+    - geographic: should buffer the line/road features with certain distance, and the final shapefile should only includes polygon features.
         - shapefile with standardized attribute tables
         - geojson format
-
 
 
 
@@ -29,6 +26,7 @@ Working on GeoSheet
 - Remove blank rows
 - Add columns names
 - Check the availability of location information (feature ID or geojson link)
+
 
 Working on spatial info
 - Read geojson file and download geojson to local folders, rename based on project_id (something that is identical to the feature) (done)
@@ -56,3 +54,5 @@ add later:
 
 
 http://stream.princeton.edu/AWCM/LIBRARIES/pyhdf-0.8.3/doc/webpage/source/install.html
+
+*** The download of raw geojson files should be standarded alone and run at the very beginning just in case someone delete files from github!!!

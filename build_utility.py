@@ -17,13 +17,18 @@ import sys
 import json
 import os
 import copy
+import geopandas as gpd
+from shapely.geometry import LineString, shape, asShape
+import geojson
+
 
 class BuilderClass(object):
 
-    def __init__(self, geosheet=None, outgeojson=None, outtxt=None):
+    def __init__(self, geosheet=None, outgeojson=None, outtxt=None, geoboundaries=None):
 
         self.geosheet = geosheet
         self.outgeojson = outgeojson
+        self.geoboundaries = geoboundaries
         self.outtxt = open(outtxt, "w")
 
 
@@ -31,7 +36,7 @@ class BuilderClass(object):
 
         """
         This function is used to 1). create an unique location id; 2). retrieve the full geojson url
-        :return: geoshee.csv with location id and geojson link
+        :return: geosheet.csv with location id and geojson link
         """
         self.outtxt.write("Start retrieving geojson url.\n")
         print "Start retrieving geojson url."
@@ -55,16 +60,12 @@ class BuilderClass(object):
         # get the full geojson link
         df["full_url"] = df["GeoJSON Link or Feature ID"].apply(lambda x: self.get_geojson(x))
 
-
         grouped_df = df.groupby(["full_url", "project_location_id"])
 
         for name, group in grouped_df:
 
-            self.get_feature_geojson(name[0], name[1])
+                self.get_feature_geojson(name[0], name[1])
 
-
-        #df.to_csv(self.geosheet, sep='\t', encoding='utf-8', index=False)
-        df.to_csv("test.tsv", sep='\t', encoding='utf-8', index=False)
         print "Finish creating unique location id...."
         print "Finish retrieving geojson url."
 
@@ -108,8 +109,7 @@ class BuilderClass(object):
             content = response.read()
             jsv = json.loads(content)
 
-            sys.path.append("../")
-            filename = "location_data/source/" + filename + ".geojson"
+            filename = "processing/geographic/" + filename + ".geojson"
 
             with open(filename, "w") as jsonfile:
                 json.dump(jsv, jsonfile)
@@ -117,6 +117,7 @@ class BuilderClass(object):
         except:
 
             print "Feature from GeoBoundaries."
+            self.get_geoboundary_feature(url, filename)
 
 
 
@@ -140,7 +141,10 @@ class BuilderClass(object):
 
         outjson = dict(type='FeatureCollection', features=[])
 
+        count = 0
         for infile in infiles:
+
+            count += 1
 
             project_id = int(float(os.path.splitext(os.path.basename(infile))[0].split("_")[0]))
             location_id = str(os.path.splitext(os.path.basename(infile))[0].split("_")[1])
@@ -155,7 +159,9 @@ class BuilderClass(object):
             injsonfile = json.load(open(infile))
             newjson = self.geom_check(injsonfile, project_id, location_id)
 
-            #self.geom_check(injsonfile, project_id, location_id)
+
+            if newjson["features"][0]["geometry"]["type"] == "LineString":
+                newjson = self.buffer_line(newjson)
 
             if newjson.get('type', None) != 'FeatureCollection':
                 raise Exception('Sorry, "%s" does not look like GeoJSON' % infile)
@@ -163,13 +169,19 @@ class BuilderClass(object):
             if type(newjson.get('features', None)) != list:
                 raise Exception('Sorry, "%s" does not look like GeoJSON' % infile)
 
-            newjson["features"][0]["properties"] = property_dict
 
+            newjson["features"][0]["properties"] = property_dict
             outjson['features'] += newjson['features']
 
         print "-------------------------"
-        print outjson["features"][0]
 
+        print "There are %s geocoded locations"%(count)
+
+        json.dumps(outjson)
+        output = open(self.outgeojson, "w")
+        json.dump(outjson, output)
+
+        """
         encoder = json.JSONEncoder(separators=(',', ':'))
         encoded = encoder.iterencode(outjson)
 
@@ -178,29 +190,29 @@ class BuilderClass(object):
         for token in encoded:
 
             output.write(token)
-
+        """
 
     def geom_check(self, injson, proj_id, loc_id):
         """
-        :return:
+        This function is used to check the geometry of each geocoded locations.
+            - geojson cannot be point feature
+            - geometry cannot be a combination of multiple types
+            - geometry cannot have multi-features
+        :param injson: individual geojson
+        :param proj_id: project id
+        :param loc_id: location id
+        :return: geojson file with fixed geometry (multi-line features) or geometry checked
         """
-        # check geometry of individual geojson
-        # line: not multiple lines in a geojson
-        # polygon: not multiple polygons
-        # points: not multiple points, no point features!!!!!!!!!!!!!
-        # not combination of geometry types
-
-        # input is the geojson file
 
         geom_types = ["LineString", "Polygon"]
 
         geoms = injson["features"]
 
-        if len(geoms) != 1:  # [0]["properties"] = property_dict
+        if len(geoms) != 1: # multi-features
 
             dest_geom_type = geoms[0]["geometry"]["type"]
 
-            if dest_geom_type not in geom_types:
+            if dest_geom_type not in geom_types: # cannot be point feature
 
                 print "Geometry Error: geometry types of project %s location %s is not correct." % (proj_id, loc_id)
                 self.outtxt.write("Geometry Error: geometry types of project %s location %s is not correct. \n" % (proj_id, loc_id))
@@ -232,16 +244,15 @@ class BuilderClass(object):
                             return injson
 
         else:
+
             return injson
-
-
 
 
 
     def connect_lines(self, injson):
         """
-        This function is used to connect polylines that are supposed to be one polyline.
-        :return:
+        :param injson: the individual geojson that has multiple line features
+        :return: one line feature
         """
 
         newjson = dict(type='FeatureCollection', features=[])
@@ -259,7 +270,123 @@ class BuilderClass(object):
         return newjson
 
 
+    def mk_dir(self):
 
+        folders = {
+            "raw_data": ["GeoSheet", "source_ancillary"],
+            "processing": ["geographic", "ancillary"],
+            "merged_file": ["geographic"]
+                  }
+
+
+        for folder in folders.keys():
+
+            fdir = "%s"%(folder)
+
+            if not os.path.isdir(fdir):
+
+                os.mkdir(fdir)
+
+                for subfolder in folders[folder]:
+
+                    subfdir = "%s/%s"%(folder, subfolder)
+
+                    if not os.path.isdir(subfdir):
+
+                        os.mkdir(subfdir)
+
+                    else:
+
+                        pass
+
+            else:
+
+                for subfolder in folders[folder]:
+
+                    subfdir = "%s/%s"%(folder, subfolder)
+
+                    if not os.path.isdir(subfdir):
+
+                        os.mkdir(subfdir)
+
+                    else:
+
+                        pass
+
+        return
+
+
+    def get_geoboundary_feature(self, feat_id, proj_loc_id):
+
+        """
+        :param countryjsons:
+            - the folder that has the country administrative boundaries
+            - the administrative geoboundary geojson file
+        :param feat_id: the identical feature id that is used to track the location feature
+        :param proj_loc_id: the proj_loc_id field
+        :return: a geojson file of feature
+        """
+
+        try:
+            country = feat_id.split("_")[0]
+            adms = feat_id.split("_")[1]
+
+            jsonpath = os.path.join(self.geoboundaries, "%s/%s_%s/%s_%s.geojson"%(country, country, adms, country, adms))
+
+            geo_data = gpd.read_file(jsonpath)
+            feat_geo = geo_data[geo_data["feature_id"] == feat_id]
+
+            filename = "processing/geographic/" + proj_loc_id + ".geojson"
+
+            with open(filename, "wb") as output:
+
+                json.dump(json.loads(feat_geo.to_json()), output)
+
+        except:
+
+
+            pass
+
+
+
+    def buffer_line(self, injson):
+
+        """
+        :param injson: the input geojson file is a LineString feature
+        :return: a buffered line feature, default buffer distance is 0.0001 degree, around 10 meters
+        """
+
+        line = LineString(injson["features"][0]["geometry"]["coordinates"])
+        buffered_line = shape(line).buffer(0.0001).__geo_interface__
+
+        # the geo_interface returns geometries in tuple pairs
+        # however the geojson has list pairs geometries
+
+        poly_tuples = buffered_line["coordinates"][0]
+        poly_lists = [[list(i) for i in poly_tuples]]
+
+        injson["features"][0]["geometry"]["coordinates"]= poly_lists
+        injson["features"][0]["geometry"]["type"] = "Polygon"
+
+        return injson
+
+
+    # validate geojson
+    def parse(self, text):
+        try:
+            return json.loads(text)
+        except ValueError as e:
+            print('invalid json: %s' % e)
+            return None  # or: raise
+
+
+    def add_count(self):
+
+        # count the number of line features that have been buffered
+        # count the number of polygon features
+        # count the total number of final product
+
+        return
 
 
 
