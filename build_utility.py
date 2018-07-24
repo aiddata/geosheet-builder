@@ -20,16 +20,49 @@ import copy
 import geopandas as gpd
 from shapely.geometry import LineString, shape, asShape
 import geojson
+from pandas.io.json import json_normalize
+import shapely
+import warnings
 
 
 class BuilderClass(object):
 
-    def __init__(self, geosheet=None, outgeojson=None, outtxt=None, geoboundaries=None):
+    def __init__(self, geosheet=None, outgeojson=None, outtxt=None, geoboundaries=None, newgeosheet=None,
+                 country=None, countryadm0=None, transactions=None, deflation_file=None):
 
-        self.geosheet = geosheet
+        self.geosheet = pd.read_csv(geosheet, encoding='utf-8', sep='\t')
         self.outgeojson = outgeojson
         self.geoboundaries = geoboundaries
         self.outtxt = open(outtxt, "w")
+        self.newgeosheet = newgeosheet
+        self.country = country
+        self.country_geom = gpd.read_file(countryadm0)['geometry'][0]
+        self.transactions = pd.read_csv(transactions, encoding='utf-8', sep=',')
+        self.deflation_file = deflation_file
+
+
+
+    def build_dataset(self):
+
+        currentpath = os.getcwd()
+        alljsonpath = os.path.join(currentpath, 'processing', 'geographic')
+
+        self.merge_geojson(alljsonpath)
+        self.merge_ancillary()
+
+        infiles = [os.path.join(alljsonpath, f) for f in os.listdir(alljsonpath) if
+                   os.path.isfile(os.path.join(alljsonpath, f)) and f.endswith("geojson")]
+
+        for file in infiles:
+
+            file_geom = gpd.read_file(file)['geometry'][0]
+
+            if (not shape(self.country_geom).contains(shape(file_geom))) or shape(self.country_geom).overlaps(shape(file_geom)):
+
+                warnings.warn("Polygon %s is out of the country.."%(os.path.basename(file)))
+
+
+
 
 
     def get_full_url(self):
@@ -41,30 +74,37 @@ class BuilderClass(object):
         self.outtxt.write("Start retrieving geojson url.\n")
         print "Start retrieving geojson url."
 
-        df = pd.read_csv(self.geosheet, encoding='utf-8', sep='\t')
-        df.dropna(how="all", inplace=True)
+        #df = pd.read_csv(self.geosheet, encoding='utf-8', sep='\t')
+        self.geosheet.dropna(how="all", inplace=True)
 
         self.outtxt.write("Creating unique location id......\n")
         print "Creating unique location id......"
 
+        # convert project id to integer
+        self.geosheet["project_id"] = self.geosheet["project_id"].astype(int)
+
         # Create an unique location id
         # ------------------------------
-        sLength = len(df["project_id"])
-        df['location_id'] = pd.Series(np.random.randn(sLength), index=df.index)
-        df["location_id"] = df["location_id"].apply(lambda x: self.create_id())
+        sLength = len(self.geosheet["project_id"])
+        self.geosheet['location_id'] = pd.Series(np.random.randn(sLength), index=self.geosheet.index)
+        self.geosheet["location_id"] = self.geosheet["location_id"].apply(lambda x: self.create_id())
         # ------------------------------
 
         # create a project_location id filed, which will be used for geojson file names
-        df['project_location_id'] = df[['project_id', 'location_id']].apply(lambda x: '_'.join(str(v) for v in x), axis=1)
+        self.geosheet['project_location_id'] = self.geosheet[['project_id', 'location_id']].apply(lambda x: '_'.join(str(v) for v in x), axis=1)
 
         # get the full geojson link
-        df["full_url"] = df["GeoJSON Link or Feature ID"].apply(lambda x: self.get_geojson(x))
+        self.geosheet["full_url"] = self.geosheet["GeoJSON Link or Feature ID"].apply(lambda x: self.get_geojson(x))
 
-        grouped_df = df.groupby(["full_url", "project_location_id"])
+        # save the geosheet under processing/ancillary, this geosheet has unique location id, and directory geojson urls
+        self.geosheet.to_csv(self.newgeosheet, encoding='utf-8', sep='\t', index=False)
+
+        grouped_df = self.geosheet.groupby(["full_url", "project_location_id"])
 
         for name, group in grouped_df:
 
                 self.get_feature_geojson(name[0], name[1])
+
 
         print "Finish creating unique location id...."
         print "Finish retrieving geojson url."
@@ -121,17 +161,12 @@ class BuilderClass(object):
 
 
 
-    def build_dataset(self):
-
-        self.get_full_url()
-
-
     def merge_geojson(self, inpath):
 
         """
         This function is used to merge multiple geojson files into one. Source: https://gist.github.com/migurski/3759608
         :param infiles: input geojson folder directory
-        :return: no return, just an output file
+        :return: a geojson file includes all geocoded location geojsons.
         """
 
         print "Start merging geojson files..."
@@ -180,17 +215,46 @@ class BuilderClass(object):
         json.dumps(outjson)
         output = open(self.outgeojson, "w")
         json.dump(outjson, output)
+        output.close()
+
+
+    def merge_ancillary(self):
 
         """
-        encoder = json.JSONEncoder(separators=(',', ':'))
-        encoded = encoder.iterencode(outjson)
-
-        output = open(self.outgeojson, 'w')
-
-        for token in encoded:
-
-            output.write(token)
+        :return: This function is used to merge geojson file with geosheet, transaction info, and calculate even split commitment to each location
         """
+
+        # add location count information to geojson file
+        merged_geojson = gpd.read_file(self.outgeojson)
+
+        count_series = merged_geojson.project_id.value_counts()
+        count_df = pd.DataFrame(count_series)
+        count_df['merge_id'] = count_df.index
+        count_df['counts'] = count_df.project_id
+        del count_df['project_id'] # this project_id field is similar to location count, should be deleted
+        merge_df = merged_geojson.merge(count_df, how='left', left_on='project_id', right_on='merge_id')
+
+
+        # add geosheet to geojson file
+        newgeosheet = pd.read_csv(self.newgeosheet, encoding='utf-8', sep='\t')
+        outdf = merge_df.merge(newgeosheet, how='left', on='project_location_id')
+
+        # add transaction info to geojson file
+        full_df = outdf.merge(self.transactions, how='left', left_on='project_id_x', right_on='project_id')
+        full_df['even_split_commitment'] = full_df.transaction_value / full_df.counts
+        full_df['location_id'] = full_df['location_id_x']
+
+        keep_columns = ['project_location_id', 'project_id', 'location_id', 'Location Name',
+                         'Identified Location Type',
+                         'Geocoded Location Type', 'Source URL', 'GeoJSON Link or Feature ID',
+                         'Geoparsing Notes', 'Geocoding and Review Note', 'full_url', 'geometry',
+                         'transaction_value', 'even_split_commitment']
+
+        full_df = full_df[keep_columns]
+
+        with open(self.outgeojson, "wb") as output:
+            json.dump(json.loads(full_df.to_json()), output)
+
 
     def geom_check(self, injson, proj_id, loc_id):
         """
@@ -270,52 +334,6 @@ class BuilderClass(object):
         return newjson
 
 
-    def mk_dir(self):
-
-        folders = {
-            "raw_data": ["GeoSheet", "source_ancillary"],
-            "processing": ["geographic", "ancillary"],
-            "merged_file": ["geographic"]
-                  }
-
-
-        for folder in folders.keys():
-
-            fdir = "%s"%(folder)
-
-            if not os.path.isdir(fdir):
-
-                os.mkdir(fdir)
-
-                for subfolder in folders[folder]:
-
-                    subfdir = "%s/%s"%(folder, subfolder)
-
-                    if not os.path.isdir(subfdir):
-
-                        os.mkdir(subfdir)
-
-                    else:
-
-                        pass
-
-            else:
-
-                for subfolder in folders[folder]:
-
-                    subfdir = "%s/%s"%(folder, subfolder)
-
-                    if not os.path.isdir(subfdir):
-
-                        os.mkdir(subfdir)
-
-                    else:
-
-                        pass
-
-        return
-
-
     def get_geoboundary_feature(self, feat_id, proj_loc_id):
 
         """
@@ -387,6 +405,62 @@ class BuilderClass(object):
         # count the total number of final product
 
         return
+
+
+    def location_type_check(self):
+
+        """
+        This function is used to check the identified location type with geocoded location type
+        :return: write into report.txt
+        """
+        newdf = pd.read_csv(self.newgeosheet, encoding='utf-8', sep='\t')
+
+        newdf['discrepancy_check']= newdf.apply(lambda x: 'False' if x['Identified Location Type']!=x['Geocoded Location Type'] else 'True', axis=1) #
+
+        loc_type_fail= newdf[newdf['discrepancy_check']=='False']
+
+        grouped_df = loc_type_fail.groupby(["project_id", "location_id"])
+
+        self.outtxt.write("Start checking the discrepancy of identified location type with geocoded location type.\n")
+        for name, group in grouped_df:
+
+            self.outtxt.write("Location type discrepancy check failed for project %s and location %s...\n"%(name[0], name[1]))
+
+        return
+
+    def spatial_scrub(self, geocoded_geom):
+
+        """
+        :param geom: geometry of geocoded feature
+        :param country_geom: geometry of destination country
+        :return:
+        """
+
+        if not shape(self.country_geom).contains(shape(geocoded_geom)):
+
+            raise ('not passed spatial scrub')
+
+
+    def deflation(self, year, currency, val):
+
+        deflation_sheet = pd.read_csv(self.deflation_file, encoding='utf-8', sep='\t')
+        df_iso = deflation_sheet[deflation_sheet['currency_val'] == currency]
+
+        if df_iso.empty:
+            raise ('donor_iso3 \'%s\' not found in deflator table' % (currency))
+        else:
+
+            try:
+                def_val = df_iso.loc[df_iso['transaction_year'] == year, 'deflator'][0]
+                deflated_val = def_val * val
+            except KeyError:
+                raise ("Year not found for: %s in the year of %s"%(currency, year))
+
+        return deflated_val
+
+
+
+
 
 
 
