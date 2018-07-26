@@ -28,7 +28,7 @@ import warnings
 class BuilderClass(object):
 
     def __init__(self, geosheet=None, outgeojson=None, outtxt=None, geoboundaries=None, newgeosheet=None,
-                 country=None, countryadm0=None, transactions=None, deflation_file=None):
+                 country=None, countryadm0=None, transactions=None, deflation_file=None, projects=None):
 
         self.geosheet = pd.read_csv(geosheet, encoding='utf-8', sep='\t')
         self.outgeojson = outgeojson
@@ -39,6 +39,7 @@ class BuilderClass(object):
         self.country_geom = gpd.read_file(countryadm0)['geometry'][0]
         self.transactions = pd.read_csv(transactions, encoding='utf-8', sep=',')
         self.deflation_file = deflation_file
+        self.projects = pd.read_csv(projects, encoding='utf-8', sep=',')
 
 
 
@@ -49,6 +50,7 @@ class BuilderClass(object):
 
         self.merge_geojson(alljsonpath)
         self.merge_ancillary()
+        self.geojson2shp()
 
         infiles = [os.path.join(alljsonpath, f) for f in os.listdir(alljsonpath) if
                    os.path.isfile(os.path.join(alljsonpath, f)) and f.endswith("geojson")]
@@ -234,7 +236,6 @@ class BuilderClass(object):
         del count_df['project_id'] # this project_id field is similar to location count, should be deleted
         merge_df = merged_geojson.merge(count_df, how='left', left_on='project_id', right_on='merge_id')
 
-
         # add geosheet to geojson file
         newgeosheet = pd.read_csv(self.newgeosheet, encoding='utf-8', sep='\t')
         outdf = merge_df.merge(newgeosheet, how='left', on='project_location_id')
@@ -244,16 +245,20 @@ class BuilderClass(object):
         full_df['even_split_commitment'] = full_df.transaction_value / full_df.counts
         full_df['location_id'] = full_df['location_id_x']
 
+
         keep_columns = ['project_location_id', 'project_id', 'location_id', 'Location Name',
                          'Identified Location Type',
                          'Geocoded Location Type', 'Source URL', 'GeoJSON Link or Feature ID',
                          'Geoparsing Notes', 'Geocoding and Review Note', 'full_url', 'geometry',
                          'transaction_value', 'even_split_commitment']
 
-        full_df = full_df[keep_columns]
+        full_df = pd.DataFrame(full_df[keep_columns], columns=keep_columns)
+
+        # merge project level information
+        full_proj_df = full_df.merge(self.projects, how='left', on='project_id').set_geometry('geometry')
 
         with open(self.outgeojson, "wb") as output:
-            json.dump(json.loads(full_df.to_json()), output)
+            json.dump(json.loads(full_proj_df.to_json()), output)
 
 
     def geom_check(self, injson, proj_id, loc_id):
@@ -459,7 +464,19 @@ class BuilderClass(object):
         return deflated_val
 
 
+    def geojson2shp(self):
 
+        """
+        This script is to convert the merged geojson file to shapefile
+        :return: shapefile under the same directory of geojson file
+        """
+
+        df = gpd.read_file(self.outgeojson)
+        gdf = gpd.GeoDataFrame(df, geometry=df.geometry)
+        gdf.crs = {'init': 'epsg:4326'}
+        filename = os.path.join(os.path.dirname(self.outgeojson), 'merged_locations.shp')
+
+        gdf.to_file(driver='ESRI Shapefile', filename=filename)
 
 
 
